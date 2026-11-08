@@ -1,9 +1,17 @@
 # Reusable: build the app's wrapper chart (upstream as a dependency + our tests),
 # push it to GHCR, and open a PR pinning the first tier's release.yaml to it.
-# Callers need permissions: contents: write, packages: write, pull-requests: write.
+# Callers need permissions: contents: read, packages: write, and pass
+# `secrets: inherit` with PROMO_APP_ID / PROMO_APP_PRIVATE_KEY (the promo GitHub
+# App). The App opens the PR so that PR workflows (CI, guardrails) run on it;
+# PRs opened with GITHUB_TOKEN trigger no workflows.
 name: mirror
 on:
   workflow_call:
+    secrets:
+      PROMO_APP_ID:
+        required: true
+      PROMO_APP_PRIVATE_KEY:
+        required: true
     inputs:
       fleet-repo:
         description: Repo holding tiers.yaml
@@ -15,9 +23,8 @@ on:
         default: oci://ghcr.io/twallac10/charts
 
 permissions:
-  contents: write
+  contents: read
   packages: write
-  pull-requests: write
 
 jobs:
   mirror:
@@ -26,7 +33,14 @@ jobs:
       group: mirror-${{ github.repository }}
       cancel-in-progress: false
     steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ secrets.PROMO_APP_ID }}
+          private-key: ${{ secrets.PROMO_APP_PRIVATE_KEY }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.app.outputs.token }}
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.3.1
@@ -84,7 +98,7 @@ jobs:
 
       - name: Open PR for the first tier
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
           NAME: ${{ steps.cfg.outputs.name }}
           VERSION: ${{ steps.cfg.outputs.version }}
           TIER: ${{ steps.cfg.outputs.tier }}
@@ -96,8 +110,8 @@ jobs:
                  (select(.kind=="OCIRepository") | .metadata.annotations."promo.twallac10.dev/chart-version") = strenv(VERSION)' "$release"
           if git diff --quiet; then echo "$TIER already pinned to $DIGEST"; exit 0; fi
           branch="mirror/${DIGEST#sha256:}"; branch=${branch:0:19}
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "${{ steps.app.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app.outputs.app-slug }}[bot]@users.noreply.github.com"
           git checkout -B "$branch"
           git commit -qam "release($TIER): $NAME $VERSION"
           git push -f origin "$branch"
