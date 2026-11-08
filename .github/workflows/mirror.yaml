@@ -1,0 +1,111 @@
+# Reusable: build the app's wrapper chart (upstream as a dependency + our tests),
+# push it to GHCR, and open a PR pinning the first tier's release.yaml to it.
+# Callers need permissions: contents: write, packages: write, pull-requests: write.
+name: mirror
+on:
+  workflow_call:
+    inputs:
+      fleet-repo:
+        description: Repo holding tiers.yaml
+        type: string
+        default: twallac10/promo-fleet
+      registry:
+        description: OCI prefix charts are pushed to
+        type: string
+        default: oci://ghcr.io/twallac10/charts
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: mirror-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+
+      - name: Read chart config
+        id: cfg
+        env:
+          FLEET_REPO: ${{ inputs.fleet-repo }}
+        run: |
+          name=$(yq .name chart/Chart.yaml)
+          wrapper=$(yq .wrapper.name mirror/chart.yaml)
+          url=$(yq .spec.url base/ocirepository.yaml)
+          if [ "$name" != "$wrapper" ] || [ "$name" != "${url##*/}" ]; then
+            echo "::error::chart name '$name', mirror wrapper.name '$wrapper' and OCIRepository '${url##*/}' must match"
+            exit 1
+          fi
+          tier=$(curl -fsSL "https://raw.githubusercontent.com/$FLEET_REPO/main/tiers.yaml" | yq '.tiers[0].name')
+          {
+            echo "name=$name"
+            echo "version=$(yq .version chart/Chart.yaml)"
+            echo "tier=$tier"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build wrapper chart
+        run: |
+          helm repo add upstream "$(yq .upstream.repo mirror/chart.yaml)"
+          helm dependency build chart
+          helm package chart -d dist
+
+      - name: Push to GHCR (never move a tag)
+        id: push
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          NAME: ${{ steps.cfg.outputs.name }}
+          VERSION: ${{ steps.cfg.outputs.version }}
+          TIER: ${{ steps.cfg.outputs.tier }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          release="tiers/$TIER/release.yaml"
+          current=$(yq 'select(.kind=="OCIRepository") | .spec.ref.digest' "$release")
+          if helm show chart "$REGISTRY/$NAME" --version "$VERSION" >/dev/null 2>&1; then
+            # Tag exists. Fine only if it is what the first tier already runs.
+            digest=$(helm pull "$REGISTRY/$NAME" --version "$VERSION" -d "$RUNNER_TEMP" 2>&1 | sed -n 's/^Digest: //p')
+            if [ "$digest" != "$current" ]; then
+              echo "::error::$NAME:$VERSION already exists ($digest). Bump chart/Chart.yaml version."
+              exit 1
+            fi
+            echo "$NAME:$VERSION already mirrored and pinned in $TIER"
+          else
+            digest=$(helm push "dist/$NAME-$VERSION.tgz" "$REGISTRY" 2>&1 | tee /dev/stderr | sed -n 's/^Digest: //p')
+          fi
+          [ -n "$digest" ] || { echo "::error::no digest"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR for the first tier
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.cfg.outputs.name }}
+          VERSION: ${{ steps.cfg.outputs.version }}
+          TIER: ${{ steps.cfg.outputs.tier }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          release="tiers/$TIER/release.yaml"
+          export DIGEST VERSION
+          yq -i '(select(.kind=="OCIRepository") | .spec.ref.digest) = strenv(DIGEST) |
+                 (select(.kind=="OCIRepository") | .metadata.annotations."promo.twallac10.dev/chart-version") = strenv(VERSION)' "$release"
+          if git diff --quiet; then echo "$TIER already pinned to $DIGEST"; exit 0; fi
+          branch="mirror/${DIGEST#sha256:}"; branch=${branch:0:19}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git commit -qam "release($TIER): $NAME $VERSION"
+          git push -f origin "$branch"
+          # shellcheck disable=SC2016 # backticks are Markdown
+          body=$(printf 'Mirrored `%s:%s` to GHCR.\n\n- Digest: `%s`\n- Upstream: %s %s\n\nEntry point into the promotion chain: merging deploys to `%s`.' \
+            "$NAME" "$VERSION" "$DIGEST" "$(yq .upstream.chart mirror/chart.yaml)" "$(yq .upstream.version mirror/chart.yaml)" "$TIER")
+          if gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN; then
+            gh pr edit "$branch" --body "$body"
+          else
+            gh pr create --head "$branch" --title "release($TIER): $NAME $VERSION" --body "$body"
+          fi
