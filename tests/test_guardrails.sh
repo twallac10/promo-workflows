@@ -151,3 +151,20 @@ test_sources_checks_every_document() {
   commit_all "$d" multi
   if in_repo "$d" "$G/check-sources.sh" HEAD >/dev/null 2>&1; then fail "HelmRepository in the first of two documents accepted"; fi
 }
+
+test_renames_count_both_paths() {
+  # git diff detects renames and lists only the new path; moving a prd/base/.github
+  # file into tiers/dev/ must still count as touching where it came from.
+  t="$FIX/tiers.yaml"
+  for src in tiers/prd/release.yaml base/helmrelease.yaml .github/workflows/gate.yaml; do
+    d=$(app_repo); mkdir -p "$d/$(dirname "$src")"
+    if [ ! -f "$d/$src" ]; then printf 'name: x\non: push\njobs: {}\n' > "$d/$src"; commit_all "$d" "add $src"; git -C "$d" push -q origin main; fi
+    base=$(git -C "$d" rev-parse main)
+    pr_branch "$d" feature/move; git -C "$d" mv "$src" tiers/dev/moved.yaml; commit_all "$d" "move $src"
+    out=$(in_repo "$d" "$G/classify.sh" "$base" HEAD feature/move "$t")
+    [ "$(val "$out" tier)" = prd ] || fail "moving $src into tiers/dev must be gated by prd, got: $out"
+  done
+  d=$(app_repo); base=$(git -C "$d" rev-parse main); pr_branch "$d" feature/move
+  git -C "$d" mv tiers/prd/release.yaml tiers/dev/old.yaml; commit_all "$d" "move prd release"
+  if in_repo "$d" "$G/check-files.sh" "$base" HEAD other prd dev >/dev/null 2>&1; then fail "moving prd's release.yaml away accepted"; fi
+}

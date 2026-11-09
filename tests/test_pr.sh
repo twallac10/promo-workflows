@@ -55,7 +55,7 @@ test_deploy_truncates_description() {
   echo "$out" | grep -q '^deployment_url=https://github.com/twallac10/promo-kyverno-policies/deployments/dev$' || fail "output: $out"
   dep=$(cat "$GH_LOG".body.1); st=$(cat "$GH_LOG".body.2)
   echo "$dep" | jq -e '.ref == "abc123" and .environment == "dev" and .auto_merge == false and .required_contexts == []
-    and .payload == {"digest": "sha256:d", "release_id": "sha256:r"}' >/dev/null || fail "deployment: $dep"
+    and .task == "promote" and .payload == {"digest": "sha256:d", "release_id": "sha256:r"}' >/dev/null || fail "deployment: $dep"
   grep -q '^api -X POST repos/twallac10/promo-kyverno-policies/deployments/42/statuses' "$GH_LOG" || fail "status not on deployment 42"
   echo "$st" | jq -e '.state == "failure" and (.description | length) == 140 and .log_url == "https://run"' >/dev/null || fail "status: $st"
 }

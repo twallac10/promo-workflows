@@ -8,7 +8,12 @@ case "$*" in
 esac
 case "$*" in
   "api repos/"*"/deployments?environment="*)
-    all="$*"; e=${all#*environment=}; e=${e%%&*}; cat "${GH_FIXTURES:-/nonexistent}/deployments-$e.json" 2>/dev/null || echo '[]';;
+    all="$*"
+    # Only the promote workflow's Deployments (task=promote) are evidence. Any other
+    # query gets the environment's newest Deployment: a gate job's, still waiting.
+    case "$all" in *task=promote*) ;; *) echo '[{"id": 1, "payload": {}}]'; exit 0;; esac
+    e=${all#*environment=}; e=${e%%&*}; cat "${GH_FIXTURES:-/nonexistent}/deployments-$e.json" 2>/dev/null || echo '[]';;
+  "api repos/"*"/deployments/1/statuses"*) echo '[{"state": "waiting"}]';;
   "api repos/"*"/deployments/"*"/statuses"*)
     all="$*"; i=${all#*deployments/}; i=${i%%/*}; cat "${GH_FIXTURES:-/nonexistent}/statuses-$i.json" 2>/dev/null || echo '[]';;
   "api -X POST repos/"*/deployments\ *) echo '{"id": 42}';;

@@ -8,7 +8,8 @@ set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 repo=$1 kind=$2 tier=$3 source=$4 release_id=$5
 env=$tier; [ "$kind" = promotion ] && env=$source
-dep=$(gh api "repos/$repo/deployments?environment=$env&per_page=1")
+# task=promote: only the promote workflow's Deployments, not the gate jobs' own.
+dep=$(gh api "repos/$repo/deployments?environment=$env&task=promote&per_page=1")
 id=$(echo "$dep" | jq -r '.[0].id // empty')
 [ -n "$id" ] || fail "no Deployment in $env yet"
 got_id=$(echo "$dep" | jq -r '.[0].payload.release_id // empty')
