@@ -112,6 +112,8 @@ jobs:
           export DIGEST VERSION
           yq -i '(select(.kind=="OCIRepository") | .spec.ref.digest) = strenv(DIGEST) |
                  (select(.kind=="OCIRepository") | .metadata.annotations."promo.twallac10.dev/chart-version") = strenv(VERSION)' "$release"
+          # The app repo's own script, so the id matches what its tests and promote check.
+          scripts/release-id.sh --write "$release"
           if git diff --quiet; then echo "$TIER already pinned to $DIGEST"; exit 0; fi
           branch="mirror/${DIGEST#sha256:}"; branch=${branch:0:19}
           git config user.name "${{ steps.app.outputs.app-slug }}[bot]"
