@@ -1,0 +1,18 @@
+# Throwaway (Phase 3 Task 1): does an empty environment expression mean "no environment"?
+name: spike-env
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        type: string
+        default: ""
+permissions:
+  contents: read
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - run: echo "ran with environment '${ENV_NAME}'"
+        env:
+          ENV_NAME: ${{ inputs.env }}
