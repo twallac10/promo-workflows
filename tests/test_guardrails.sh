@@ -117,3 +117,28 @@ test_guardrails_action_wiring() {
   [ "$(yq '.outputs.environment.value' "$a")" = '${{ steps.classify.outputs.tier }}' ] || fail "environment output"
   [ "$(yq '.inputs.fleet-repo.default' "$a")" = twallac10/promo-fleet ] || fail "fleet-repo default"
 }
+
+test_sources_fails_closed() {
+  hr='{apiVersion: source.toolkit.fluxcd.io/v1, kind: HelmRepository, metadata: {name: x}, spec: {url: "https://charts.example"}}'
+  d=$(app_repo); pr_branch "$d" feature/x
+  echo "$hr" > "$d/tiers/dev/a b.yaml"; commit_all "$d" "space in name"
+  if in_repo "$d" "$G/check-sources.sh" HEAD >/dev/null 2>&1; then fail "HelmRepository in a file name with a space accepted"; fi
+  git -C "$d" reset -q --hard main
+  printf 'apiVersion: v1\nkind: List\nitems:\n  - %s\n' "$hr" > "$d/tiers/dev/list.yaml"; commit_all "$d" "nested"
+  if in_repo "$d" "$G/check-sources.sh" HEAD >/dev/null 2>&1; then fail "HelmRepository nested in a List accepted"; fi
+  git -C "$d" reset -q --hard main
+  printf 'kind: [unclosed\n' > "$d/tiers/dev/broken.yaml"; commit_all "$d" "broken"
+  if in_repo "$d" "$G/check-sources.sh" HEAD >/dev/null 2>&1; then fail "unparseable YAML skipped"; fi
+}
+
+test_classify_shared_paths_need_last_tier() {
+  # base/ deploys to every tier at once; .github/ and scripts/ change the gate and
+  # promotion machinery: such PRs need the last tier's approval.
+  t="$FIX/tiers.yaml"
+  for p in base/helmrelease.yaml .github/workflows/gate.yaml scripts/release-id.sh; do
+    d=$(app_repo); base=$(git -C "$d" rev-parse main); pr_branch "$d" feature/x
+    mkdir -p "$d/$(dirname "$p")"; echo "# change" >> "$d/$p"; commit_all "$d" "touch $p"
+    out=$(in_repo "$d" "$G/classify.sh" "$base" HEAD feature/x "$t")
+    [ "$(val "$out" kind)" = other ] && [ "$(val "$out" tier)" = prd ] || fail "$p: want other/prd, got: $out"
+  done
+}

@@ -38,7 +38,7 @@ jobs:
           ref: main
           fetch-depth: 0
           token: ${{ steps.app.outputs.token }}
-      - uses: twallac10/promo-workflows/actions/promote@v0.5.0
+      - uses: twallac10/promo-workflows/actions/promote@v0.5.1
         with:
           token: ${{ steps.app.outputs.token }}
           app-slug: ${{ steps.app.outputs.app-slug }}

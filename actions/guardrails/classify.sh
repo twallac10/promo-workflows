@@ -3,7 +3,9 @@
 # name (labels can be edited by anyone with triage access):
 #   promote/<tier>  promotion into <tier> (from the previous tier)
 #   revert/<tier>   revert of <tier>'s release
-#   anything else   other: gated by the last tier (in tiers.yaml order) it touches, or none
+#   anything else   other: gated by the last tier (in tiers.yaml order) it touches,
+#                   or none; touching base/ (deploys to every tier at once), .github/ or
+#                   scripts/ (the gate and promotion machinery) counts as touching the last tier
 # Prints kind=, tier=, and source= for promotions.
 # Usage: classify.sh <base> <head> <head-ref> <tiers.yaml>
 set -euo pipefail
@@ -26,5 +28,6 @@ case $ref in
   *)
     tier=
     for t in $names; do changed_files "$base" "$head" | grep -q "^tiers/$t/" && tier=$t; done
+    changed_files "$base" "$head" | grep -qE '^(base|\.github|scripts)/' && tier=$(echo "$names" | tail -1)
     echo "kind=other"; echo "tier=$tier";;
 esac
