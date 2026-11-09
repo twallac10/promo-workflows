@@ -13,7 +13,7 @@ while IFS= read -r -d '' f; do
   case $f in *.yaml|*.yml) ;; *) continue;; esac
   git show "$head:$f" > "$tmp/doc" || fail "$f: cannot read"
   yq -o json -I0 '.' "$tmp/doc" > "$tmp/json" 2>/dev/null || fail "$f: cannot parse YAML"
-  jq -e '[.. | objects | select(.kind? == "HelmRepository")] | length == 0' "$tmp/json" >/dev/null \
+  jq -e -s '[.[] | .. | objects | select(.kind? == "HelmRepository")] | length == 0' "$tmp/json" >/dev/null \
     || fail "$f: HelmRepository is not allowed"
   bad=$(jq -r --arg p "$prefix" '.. | objects | select(.kind? == "OCIRepository") | .spec.url // "" | select(startswith($p) | not)' "$tmp/json")
   [ -z "$bad" ] || fail "$f: OCIRepository $bad is outside $prefix"

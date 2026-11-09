@@ -142,3 +142,12 @@ test_classify_shared_paths_need_last_tier() {
     [ "$(val "$out" kind)" = other ] && [ "$(val "$out" tier)" = prd ] || fail "$p: want other/prd, got: $out"
   done
 }
+
+test_sources_checks_every_document() {
+  # jq -e's exit status reflects only the last document: a clean one after a
+  # HelmRepository must not hide it.
+  d=$(app_repo); pr_branch "$d" feature/x
+  printf 'apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata: {name: x}\nspec: {url: "https://charts.example"}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: y}\n' > "$d/tiers/dev/multi.yaml"
+  commit_all "$d" multi
+  if in_repo "$d" "$G/check-sources.sh" HEAD >/dev/null 2>&1; then fail "HelmRepository in the first of two documents accepted"; fi
+}
