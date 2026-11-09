@@ -1,7 +1,7 @@
 # Reusable: called by each app repo on repository_dispatch from Flux
 # (event type HelmRelease/<app>.<app>). Validates the event, checks it against
 # main, records a Deployment and opens the promotion or revert PR, using the
-# promo GitHub App so PR workflows run. Callers: `secrets: inherit`.
+# promo GitHub App so PR workflows run. Callers pass PROMO_APP_ID and PROMO_APP_PRIVATE_KEY explicitly.
 name: promote
 on:
   workflow_call:

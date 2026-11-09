@@ -1,7 +1,7 @@
 # Reusable: build the app's wrapper chart (upstream as a dependency + our tests),
 # push it to GHCR, and open a PR pinning the first tier's release.yaml to it.
 # Callers need permissions: contents: read, packages: write, and pass
-# `secrets: inherit` with PROMO_APP_ID / PROMO_APP_PRIVATE_KEY (the promo GitHub
+# PROMO_APP_ID and PROMO_APP_PRIVATE_KEY (explicitly, not `secrets: inherit`) (the promo GitHub
 # App). The App opens the PR so that PR workflows (CI, guardrails) run on it;
 # PRs opened with GITHUB_TOKEN trigger no workflows.
 name: mirror
