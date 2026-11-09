@@ -14,7 +14,8 @@ app_repo() {
   git init -q --bare -b main "$root/origin.git"
   git clone -q "$root/origin.git" "$d" 2>/dev/null
   cp -R "$FIX/app/." "$d/"
-  mkdir -p "$d/tiers/stg"; cp "$d/tiers/dev/release.yaml" "$d/tiers/stg/release.yaml"
+  for t in stg prd; do mkdir -p "$d/tiers/$t"; cp "$d/tiers/dev/release.yaml" "$d/tiers/$t/release.yaml"; done
+  for t in dev stg prd; do echo "# tier-only $t" > "$d/tiers/$t/tier.yaml"; done
   git -C "$d" -c user.name=t -c user.email=t@t add -A
   git -C "$d" -c user.name=t -c user.email=t@t commit -qm init
   git -C "$d" push -q origin main
@@ -29,4 +30,15 @@ new_dev_release() {
   yq -i '(select(.kind=="HelmRelease") | .spec.values.probe) = "'"$2"'"' "$1/tiers/dev/release.yaml"
   "$1/scripts/release-id.sh" --write "$1/tiers/dev/release.yaml"
   git -C "$1" commit -qam "dev: $2"; git -C "$1" push -q origin main
+}
+# Start a PR branch <name> from main in app checkout <dir>.
+pr_branch() { git -C "$1" checkout -q -b "$2" main; }
+# Commit everything in <dir> with message <msg>.
+commit_all() { git -C "$1" add -A; git -C "$1" commit -qm "$2"; }
+# Canned GitHub Deployments for the gh stub: deployments_fixture <env> <state> <release_id>
+deployments_fixture() {
+  export GH_FIXTURES=${GH_FIXTURES:-$(mktemp -d)}
+  echo "[{\"id\": 9$RANDOM, \"payload\": {\"release_id\": \"$3\"}}]" > "$GH_FIXTURES/deployments-$1.json"
+  id=$(jq -r '.[0].id' "$GH_FIXTURES/deployments-$1.json")
+  echo "[{\"state\": \"$2\"}]" > "$GH_FIXTURES/statuses-$id.json"
 }

@@ -7,6 +7,10 @@ case "$*" in
   *--input\ -*) cat > "$GH_LOG.body.$n";;
 esac
 case "$*" in
+  "api repos/"*"/deployments?environment="*)
+    all="$*"; e=${all#*environment=}; e=${e%%&*}; cat "${GH_FIXTURES:-/nonexistent}/deployments-$e.json" 2>/dev/null || echo '[]';;
+  "api repos/"*"/deployments/"*"/statuses"*)
+    all="$*"; i=${all#*deployments/}; i=${i%%/*}; cat "${GH_FIXTURES:-/nonexistent}/statuses-$i.json" 2>/dev/null || echo '[]';;
   "api -X POST repos/"*/deployments\ *) echo '{"id": 42}';;
   "api -X POST repos/"*/statuses\ *) echo '{}';;
   "pr list"*) [ -n "${GH_OPEN_PR:-}" ] && echo "$GH_OPEN_PR"; true;;

@@ -1,0 +1,102 @@
+# Guardrails for a PR to an app repo's main, run in the base (main) checkout.
+# Classifies the PR by branch name, runs the checks for its kind and outputs
+# the environment promotion-gate must wait in. PR fields come from the event
+# file; no code from the PR head is executed.
+name: guardrails
+description: Classify a PR and run the promotion guardrails; outputs the environment to gate on
+inputs:
+  token:
+    description: Token with deployments:read on this repo (github.token)
+    required: true
+  fleet-repo:
+    description: Repo holding tiers.yaml
+    default: twallac10/promo-fleet
+outputs:
+  kind:
+    description: promotion, revert or other
+    value: ${{ steps.classify.outputs.kind }}
+  environment:
+    description: Environment promotion-gate waits in (empty for PRs touching no tier)
+    value: ${{ steps.classify.outputs.tier }}
+runs:
+  using: composite
+  steps:
+    - id: pr
+      shell: bash
+      env:
+        FLEET_REPO: ${{ inputs.fleet-repo }}
+      run: |
+        base=$(jq -r .pull_request.base.sha "$GITHUB_EVENT_PATH")
+        head=$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")
+        jq -r .pull_request.head.ref "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/head-ref"
+        git fetch -q origin "$head"
+        curl -fsSL "https://raw.githubusercontent.com/$FLEET_REPO/main/tiers.yaml" -o "$RUNNER_TEMP/tiers.yaml"
+        { echo "base=$base"; echo "head=$head"; echo "first=$(yq '.tiers[0].name' "$RUNNER_TEMP/tiers.yaml")"; } | tee -a "$GITHUB_OUTPUT"
+
+    - id: classify
+      shell: bash
+      env:
+        BASE: ${{ steps.pr.outputs.base }}
+        HEAD: ${{ steps.pr.outputs.head }}
+      run: |
+        "$GITHUB_ACTION_PATH/classify.sh" "$BASE" "$HEAD" "$(cat "$RUNNER_TEMP/head-ref")" "$RUNNER_TEMP/tiers.yaml" | tee -a "$GITHUB_OUTPUT"
+
+    - id: check-files
+      shell: bash
+      env:
+        BASE: ${{ steps.pr.outputs.base }}
+        HEAD: ${{ steps.pr.outputs.head }}
+        KIND: ${{ steps.classify.outputs.kind }}
+        TIER: ${{ steps.classify.outputs.tier }}
+        FIRST: ${{ steps.pr.outputs.first }}
+      run: |
+        "$GITHUB_ACTION_PATH/check-files.sh" "$BASE" "$HEAD" "$KIND" "$TIER" "$FIRST"
+
+    - id: check-release
+      if: steps.classify.outputs.kind != 'other'
+      shell: bash
+      env:
+        BASE: ${{ steps.pr.outputs.base }}
+        HEAD: ${{ steps.pr.outputs.head }}
+        KIND: ${{ steps.classify.outputs.kind }}
+        TIER: ${{ steps.classify.outputs.tier }}
+        SOURCE: ${{ steps.classify.outputs.source }}
+      run: |
+        "$GITHUB_ACTION_PATH/check-release.sh" "$BASE" "$HEAD" "$KIND" "$TIER" "$SOURCE" | tee -a "$GITHUB_OUTPUT"
+
+    - id: check-evidence
+      if: steps.classify.outputs.kind != 'other'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        KIND: ${{ steps.classify.outputs.kind }}
+        TIER: ${{ steps.classify.outputs.tier }}
+        SOURCE: ${{ steps.classify.outputs.source }}
+        RELEASE_ID: ${{ steps.check-release.outputs.release_id }}
+      run: |
+        "$GITHUB_ACTION_PATH/check-evidence.sh" "$GITHUB_REPOSITORY" "$KIND" "$TIER" "$SOURCE" "$RELEASE_ID"
+
+    - id: check-sources
+      shell: bash
+      env:
+        HEAD: ${{ steps.pr.outputs.head }}
+      run: |
+        "$GITHUB_ACTION_PATH/check-sources.sh" "$HEAD"
+
+    - id: gitleaks
+      shell: bash
+      run: |
+        # Pinned: gitleaks 8.30.1, checksum from the release's checksums.txt.
+        v=8.30.1 sum=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v$v/gitleaks_${v}_linux_x64.tar.gz" -o "$RUNNER_TEMP/gitleaks.tgz"
+        echo "$sum  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+        tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+        echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+    - id: scan-secrets
+      shell: bash
+      env:
+        BASE: ${{ steps.pr.outputs.base }}
+        HEAD: ${{ steps.pr.outputs.head }}
+      run: |
+        "$GITHUB_ACTION_PATH/scan-secrets.sh" "$BASE" "$HEAD"
