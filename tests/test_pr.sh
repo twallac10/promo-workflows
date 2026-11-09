@@ -1,5 +1,3 @@
-evidence() { f=$(mktemp); echo "evidence body" > "$f"; echo "$f"; }
-
 test_open_pr_creates_branch_and_pr() {
   use_gh_stub; d=$(app_repo); new_dev_release "$d" v2
   out=$("$A/open-pr.sh" "$d" dev stg "$(evidence)")

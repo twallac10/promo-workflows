@@ -42,3 +42,4 @@ deployments_fixture() {
   id=$(jq -r '.[0].id' "$GH_FIXTURES/deployments-$1.json")
   echo "[{\"state\": \"$2\"}]" > "$GH_FIXTURES/statuses-$id.json"
 }
+evidence() { f=$(mktemp); echo "evidence body" > "$f"; echo "$f"; }

@@ -1,7 +1,8 @@
 # Shared by open-pr.sh and revert-pr.sh. Run inside the app repo checkout.
 
 # Push <branch> (force: one branch per target, always the newest content),
-# make sure <label> exists, then create the PR or update the open one.
+# make sure <label> exists, create the PR or update the open one, then enable
+# auto-merge: it merges once promotion-gate passes (prd: once approved).
 # Prints pr=<url>.
 upsert_pr() {
   local branch=$1 label=$2 title=$3 body=$4 open
@@ -9,11 +10,19 @@ upsert_pr() {
   gh label create "$label" --color 0E8A16 --force >/dev/null
   open=$(gh pr list --head "$branch" --state open --json url -q '.[0].url')
   if [ -n "$open" ]; then
-    gh pr edit "$branch" --title "$title" --body-file "$body" >/dev/null
-    echo "pr=$open"
+    gh pr edit "$branch" --title "$title" --body-file "$body" --add-label "$label" >/dev/null
   else
-    echo "pr=$(gh pr create --head "$branch" --base main --title "$title" --body-file "$body" --label "$label")"
+    open=$(gh pr create --head "$branch" --base main --title "$title" --body-file "$body" --label "$label")
   fi
+  enable_auto_merge "$branch"
+  echo "pr=$open"
+}
+
+# Squash auto-merge. Warns (stderr: stdout feeds $GITHUB_OUTPUT) rather than
+# fails when the repo doesn't allow it yet (task gh:envs turns it on).
+enable_auto_merge() {
+  local err
+  err=$(gh pr merge "$1" --auto --squash 2>&1 >/dev/null) || echo "::warning::auto-merge not enabled for $1: $err" >&2
 }
 
 # "<app> <chart version>" from a release.yaml, for PR titles.

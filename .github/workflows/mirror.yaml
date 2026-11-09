@@ -129,3 +129,5 @@ jobs:
           else
             gh pr create --head "$branch" --title "release($TIER): $NAME $VERSION" --body "$body"
           fi
+          # Merges itself once promotion-gate passes; warn if the repo doesn't allow auto-merge yet.
+          gh pr merge "$branch" --auto --squash || echo "::warning::auto-merge not enabled for $branch"
