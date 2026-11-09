@@ -82,7 +82,7 @@ jobs:
           echo "$GH_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
           release="tiers/$TIER/release.yaml"
           current=$(yq 'select(.kind=="OCIRepository") | .spec.ref.digest' "$release")
-          if helm show chart "$REGISTRY/$NAME" --version "$VERSION" >/dev/null 2>&1; then
+          if out=$(helm show chart "$REGISTRY/$NAME" --version "$VERSION" 2>&1); then
             # Tag exists. Fine only if it is what the first tier already runs.
             digest=$(helm pull "$REGISTRY/$NAME" --version "$VERSION" -d "$RUNNER_TEMP" 2>&1 | sed -n 's/^Digest: //p')
             if [ "$digest" != "$current" ]; then
@@ -90,8 +90,12 @@ jobs:
               exit 1
             fi
             echo "$NAME:$VERSION already mirrored and pinned in $TIER"
-          else
+          elif echo "$out" | grep -q ': not found$'; then
             digest=$(helm push "dist/$NAME-$VERSION.tgz" "$REGISTRY" 2>&1 | tee /dev/stderr | sed -n 's/^Digest: //p')
+          else
+            # Any other error (network, auth) must not be read as "absent": pushing would move the tag.
+            echo "::error::cannot tell whether $NAME:$VERSION exists: $out"
+            exit 1
           fi
           [ -n "$digest" ] || { echo "::error::no digest"; exit 1; }
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
