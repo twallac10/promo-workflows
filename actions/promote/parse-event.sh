@@ -33,6 +33,14 @@ case $severity/$reason in
 esac
 # One line, at most 1000 characters, for outputs and the Deployment.
 message=$(field .client_payload.message | tr '\n\t' '  ' | cut -c1-1000)
+# Was this an upgrade (Helm release revision 2+)? Only a failed upgrade is
+# rolled back, so only then does Git need a revert PR.
+revision=$(echo "$message" | sed -n "s|.*for release $app/$app\.v\([0-9][0-9]*\) .*|\1|p")
+case $reason in
+  UpgradeFailed) upgrade=true;;
+  InstallFailed) upgrade=false;;
+  *) if [ "${revision:-1}" -gt 1 ]; then upgrade=true; else upgrade=false; fi;;
+esac
 
 echo "outcome=$outcome"
 echo "app=$app"
@@ -41,3 +49,4 @@ echo "digest=$digest"
 echo "release_id=$release_id"
 echo "reason=$reason"
 echo "message=$message"
+echo "upgrade=$upgrade"

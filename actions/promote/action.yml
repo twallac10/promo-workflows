@@ -89,7 +89,7 @@ runs:
         "$GITHUB_ACTION_PATH/open-pr.sh" . "$TIER" "$NEXT" "$RUNNER_TEMP/evidence.md" | tee -a "$GITHUB_OUTPUT"
 
     - id: revert
-      if: steps.verify.outputs.status == 'ok' && steps.parse.outputs.outcome == 'failure' && steps.tier.outputs.on_failure == 'rollback'
+      if: steps.verify.outputs.status == 'ok' && steps.parse.outputs.outcome == 'failure' && steps.tier.outputs.on_failure == 'rollback' && steps.parse.outputs.upgrade == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}

@@ -21,6 +21,7 @@ test_workflow_wiring() {
   step_if open-pr | grep -q "steps.tier.outputs.next != ''" || fail "open-pr needs a next tier"
   step_if revert | grep -q "steps.parse.outputs.outcome == 'failure'" || fail "revert on failure only"
   step_if revert | grep -q "steps.tier.outputs.on_failure == 'rollback'" || fail "revert only in rollback tiers"
+  step_if revert | grep -q "steps.parse.outputs.upgrade == 'true'" || fail "revert only after a failed upgrade (nothing to roll back after a first install)"
   uses=$(yq '.jobs.promote.steps[] | select(.uses | test("actions/promote")) | .uses' "$W")
   [ "$uses" = "twallac10/promo-workflows/actions/promote@v$(cat "$ROOT/VERSION")" ] || fail "action pin $uses != v$(cat "$ROOT/VERSION")"
   [ "$(yq '.jobs.promote.concurrency["cancel-in-progress"]' "$W")" = false ] || fail "concurrency must queue, not cancel"

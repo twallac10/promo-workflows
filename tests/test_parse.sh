@@ -41,3 +41,15 @@ test_parse_rejects_bad_fields() {
     if out=$(out_of "$f" 2>&1); then fail "accepted: $edit -> $out"; fi
   done
 }
+
+test_parse_upgrade_flag() {
+  # Revert PRs only make sense after a failed upgrade: a failed first install has nothing to roll back to.
+  [ "$(val "$(out_of "$FIX/failure.json")" upgrade)" = true ] || fail "TestFailed on v2 is an upgrade"
+  f=$(fixture_with failure '.client_payload.message |= sub("kyverno-policies\\.v2"; "kyverno-policies.v1")')
+  [ "$(val "$(out_of "$f")" upgrade)" = false ] || fail "TestFailed on v1 is the first install"
+  f=$(fixture_with failure '.client_payload.reason = "InstallFailed" | .client_payload.message = "Helm install failed for release kyverno-policies/kyverno-policies with chart x: boom"')
+  [ "$(val "$(out_of "$f")" upgrade)" = false ] || fail "InstallFailed is not an upgrade"
+  f=$(fixture_with failure '.client_payload.reason = "UpgradeFailed" | .client_payload.message = "Helm upgrade failed for release kyverno-policies/kyverno-policies with chart x: boom"')
+  [ "$(val "$(out_of "$f")" upgrade)" = true ] || fail "UpgradeFailed is an upgrade"
+  [ "$(val "$(out_of "$FIX/success.json")" upgrade)" = true ] || fail "success fixture is v2"
+}
