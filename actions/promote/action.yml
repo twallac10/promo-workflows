@@ -78,6 +78,17 @@ runs:
         git config user.name "$APP_SLUG[bot]"
         git config user.email "$APP_SLUG[bot]@users.noreply.github.com"
 
+    - id: close-promotion
+      if: steps.verify.outputs.status == 'ok' && steps.parse.outputs.outcome == 'failure' && steps.tier.outputs.next != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        TIER: ${{ steps.parse.outputs.tier }}
+        NEXT: ${{ steps.tier.outputs.next }}
+        REASON: ${{ steps.parse.outputs.reason }}
+      run: |
+        "$GITHUB_ACTION_PATH/close-pr.sh" . "$NEXT" "$TIER reported $REASON for its current release" | tee -a "$GITHUB_OUTPUT"
+
     - id: open-pr
       if: steps.verify.outputs.status == 'ok' && steps.parse.outputs.outcome == 'success' && steps.tier.outputs.next != ''
       shell: bash

@@ -6,7 +6,11 @@
 set -euo pipefail
 ev=$1 repo=$2
 die() { echo "rejected event: $*" >&2; exit 1; }
-field() { jq -r "$1 // \"\"" "$ev"; }
+# A string field, or empty when absent; any other JSON type is rejected.
+field() { jq -r "($1) as \$v | if \$v == null then \"\" elif (\$v | type) == \"string\" then \$v else error(\"not a string\") end" "$ev" || die "$1 is not a string"; }
+# Whole-string match (bash [[ =~ ]] anchors ^ and $ to the string, so a value
+# with a newline can't pass on one good line).
+is() { [[ $1 =~ $2 ]]; }
 
 sha='^sha256:[0-9a-f]{64}$'
 action=$(field .action)
@@ -17,15 +21,15 @@ release_id=$(field '.client_payload.metadata."release-id"')
 severity=$(field .client_payload.severity)
 reason=$(field .client_payload.reason)
 
-echo "$app" | grep -Eq '^[a-z][a-z0-9-]{0,40}$' || die "app '$app'"
+is "$app" '^[a-z][a-z0-9-]{0,40}$' || die "app '$app'"
 [ "$repo" = "promo-$app" ] || die "app '$app' is not this repo ($repo)"
 [ "$action" = "HelmRelease/$app.$app" ] || die "event type '$action'"
 [ "$(field .client_payload.involvedObject.kind)" = HelmRelease ] || die "involved object kind"
 [ "$(field .client_payload.involvedObject.name)" = "$app" ] || die "involved object name"
-echo "$tier" | grep -Eq '^[a-z][a-z0-9-]{0,30}$' || die "tier '$tier'"
-echo "$digest" | grep -Eq "$sha" || die "digest '$digest'"
-echo "$release_id" | grep -Eq "$sha" || die "release id '$release_id'"
-echo "$reason" | grep -Eq '^[A-Za-z]{1,40}$' || die "reason '$reason'"
+is "$tier" '^[a-z][a-z0-9-]{0,30}$' || die "tier '$tier'"
+is "$digest" "$sha" || die "digest '$digest'"
+is "$release_id" "$sha" || die "release id '$release_id'"
+is "$reason" '^[A-Za-z]{1,40}$' || die "reason '$reason'"
 case $severity/$reason in
   info/TestSucceeded) outcome=success;;
   error/TestFailed|error/UpgradeFailed|error/InstallFailed) outcome=failure;;

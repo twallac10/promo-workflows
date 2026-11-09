@@ -17,6 +17,9 @@ test_workflow_wiring() {
   for id in deploy open-pr revert; do
     step_if $id | grep -q "steps.verify.outputs.status == 'ok'" || fail "$id must require a verified event"
   done
+  step_if close-promotion | grep -q "steps.verify.outputs.status == 'ok'" || fail "close-promotion must require a verified event"
+  step_if close-promotion | grep -q "steps.parse.outputs.outcome == 'failure'" || fail "close-promotion on failure only"
+  step_if close-promotion | grep -q "steps.tier.outputs.next != ''" || fail "close-promotion needs a next tier"
   step_if open-pr | grep -q "steps.parse.outputs.outcome == 'success'" || fail "open-pr on success only"
   step_if open-pr | grep -q "steps.tier.outputs.next != ''" || fail "open-pr needs a next tier"
   step_if revert | grep -q "steps.parse.outputs.outcome == 'failure'" || fail "revert on failure only"

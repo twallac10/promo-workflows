@@ -21,3 +21,23 @@ release_name() {
   echo "$(yq 'select(.kind=="HelmRelease") | .metadata.name' "$1")" \
        "$(yq 'select(.kind=="OCIRepository") | .metadata.annotations."promo.twallac10.dev/chart-version"' "$1")"
 }
+
+# The workflow verified the event against the checkout's HEAD. Fail closed
+# (print a notice, return 1) if main has since changed tiers/<tier>/: a
+# promotion or revert built from the new main would rest on old evidence.
+main_unchanged_since() {
+  local verified=$1 tier=$2
+  git fetch -q origin main
+  if ! git diff --quiet "$verified" origin/main -- "tiers/$tier/"; then
+    echo "main moved on since the event was verified (tiers/$tier changed); doing nothing" >&2
+    return 1
+  fi
+}
+
+# Close the open PR from <branch>, if any, with <comment>. Prints the closed URL or nothing.
+close_open_pr() {
+  local branch=$1 comment=$2 open
+  open=$(gh pr list --head "$branch" --state open --json url -q '.[0].url')
+  [ -z "$open" ] || gh pr close "$branch" --comment "$comment" --delete-branch >/dev/null
+  echo "$open"
+}

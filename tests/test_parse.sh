@@ -36,6 +36,10 @@ test_parse_rejects_bad_fields() {
     '.client_payload.metadata.app = "prometheus"' \
     '.client_payload.involvedObject.kind = "Kustomization"' \
     '.client_payload.severity = "error"' \
+    '.client_payload.metadata.tier = "dev\nnext=x\ntier=../evil"' \
+    '.client_payload.metadata."oci-digest" = (.client_payload.metadata."oci-digest" + "\noutcome=success")' \
+    '.client_payload.metadata."release-id" = [.client_payload.metadata."release-id"]' \
+    '.client_payload.reason = "TestSucceeded\nnext=x"' \
     '.client_payload.reason = "UpgradeSucceeded"'; do
     f=$(fixture_with success "$edit")
     if out=$(out_of "$f" 2>&1); then fail "accepted: $edit -> $out"; fi
