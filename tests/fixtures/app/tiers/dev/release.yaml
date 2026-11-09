@@ -1,0 +1,22 @@
+# PROMOTABLE: copied verbatim from the previous tier by a promotion PR.
+# Only the chart digest, its version annotation and shared values belong here.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: kyverno-policies
+  namespace: kyverno-policies
+  annotations:
+    promo.twallac10.dev/chart-version: 3.9.2-2
+spec:
+  ref:
+    digest: sha256:885316ab9f6c6e0ffa78a44882b1d4126dc5b5ace08d0311ba4a8db39a8bc35c
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kyverno-policies
+  namespace: kyverno-policies
+  annotations:
+    event.toolkit.fluxcd.io/release-id: sha256:15ce03346f5c55f348c80fc0c6a46c877d96756232589b800a787e35b95f4591
+spec:
+  values: {}

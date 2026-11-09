@@ -1,0 +1,24 @@
+{
+  "action": "HelmRelease/kyverno-policies.kyverno-policies",
+  "client_payload": {
+    "involvedObject": {
+      "kind": "HelmRelease",
+      "namespace": "kyverno-policies",
+      "name": "kyverno-policies",
+      "apiVersion": "helm.toolkit.fluxcd.io/v2"
+    },
+    "severity": "error",
+    "timestamp": "2026-11-09T13:30:00Z",
+    "message": "Helm test failed for release kyverno-policies/kyverno-policies.v2 with chart promo-kyverno-policies@3.9.2-2+885316ab9f6c: 1 error occurred:\n\t* pod kyverno-policies-test-ready failed",
+    "reason": "TestFailed",
+    "metadata": {
+      "app": "kyverno-policies",
+      "tier": "dev",
+      "release-id": "sha256:15ce03346f5c55f348c80fc0c6a46c877d96756232589b800a787e35b95f4591",
+      "oci-digest": "sha256:885316ab9f6c6e0ffa78a44882b1d4126dc5b5ace08d0311ba4a8db39a8bc35c",
+      "revision": "3.9.2-2+885316ab9f6c",
+      "token": "sha256:aca1d24012b25a4328510797bcbba0a3833eabb8a523882e9380577077a6ee95"
+    },
+    "reportingController": "helm-controller"
+  }
+}
