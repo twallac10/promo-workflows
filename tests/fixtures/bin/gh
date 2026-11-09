@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Test stub for gh: appends each call to $GH_LOG (one line), saves any stdin
+# body to $GH_LOG.body.<n>, and answers just enough for the promote scripts.
+n=$(( $(wc -l < "$GH_LOG" 2>/dev/null || echo 0) + 1 ))
+echo "$*" >> "$GH_LOG"
+case "$*" in
+  *--input\ -*) cat > "$GH_LOG.body.$n";;
+esac
+case "$*" in
+  "api -X POST repos/"*/deployments\ *) echo '{"id": 42}';;
+  "api -X POST repos/"*/statuses\ *) echo '{}';;
+  "pr list"*) [ -n "${GH_OPEN_PR:-}" ] && echo "$GH_OPEN_PR"; true;;
+  "pr create"*) echo "https://github.com/twallac10/promo-kyverno-policies/pull/7";;
+esac
+exit 0

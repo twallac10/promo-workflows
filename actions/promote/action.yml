@@ -1,0 +1,115 @@
+# Handle one Flux event (repository_dispatch) in an app repo checked out at
+# main: validate it, check it against Git, record a Deployment, then open the
+# promotion PR (success) or, in a rollback tier, the revert PR (failure).
+# Values reach scripts through env only; the payload is read from the event file.
+name: promote
+description: Turn a Flux Helm test result into a Deployment and a promotion or revert PR
+inputs:
+  token:
+    description: GitHub App installation token (Deployments, PRs, labels, push)
+    required: true
+  app-slug:
+    description: GitHub App slug, for the commit author
+    required: true
+  fleet-repo:
+    description: Repo holding tiers.yaml
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: parse
+      shell: bash
+      run: |
+        jq '.client_payload' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/event.json"
+        { echo '### Flux event'; echo '```json'; cat "$RUNNER_TEMP/event.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        "$GITHUB_ACTION_PATH/parse-event.sh" "$GITHUB_EVENT_PATH" "${GITHUB_REPOSITORY#*/}" | tee -a "$GITHUB_OUTPUT"
+
+    - id: tier
+      shell: bash
+      env:
+        FLEET_REPO: ${{ inputs.fleet-repo }}
+        TIER: ${{ steps.parse.outputs.tier }}
+      run: |
+        curl -fsSL "https://raw.githubusercontent.com/$FLEET_REPO/main/tiers.yaml" -o "$RUNNER_TEMP/tiers.yaml"
+        "$GITHUB_ACTION_PATH/next-tier.sh" "$RUNNER_TEMP/tiers.yaml" "$TIER" | tee -a "$GITHUB_OUTPUT"
+
+    - id: verify
+      shell: bash
+      env:
+        TIER: ${{ steps.parse.outputs.tier }}
+        DIGEST: ${{ steps.parse.outputs.digest }}
+        RELEASE_ID: ${{ steps.parse.outputs.release_id }}
+      run: |
+        "$GITHUB_ACTION_PATH/verify.sh" . "$TIER" "$DIGEST" "$RELEASE_ID" | tee -a "$GITHUB_OUTPUT"
+
+    - id: deploy
+      if: steps.verify.outputs.status == 'ok'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        TIER: ${{ steps.parse.outputs.tier }}
+        OUTCOME: ${{ steps.parse.outputs.outcome }}
+        DIGEST: ${{ steps.parse.outputs.digest }}
+        RELEASE_ID: ${{ steps.parse.outputs.release_id }}
+        REASON: ${{ steps.parse.outputs.reason }}
+        MESSAGE: ${{ steps.parse.outputs.message }}
+        APP_SLUG: ${{ inputs.app-slug }}
+      run: |
+        run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+        "$GITHUB_ACTION_PATH/deploy.sh" "$GITHUB_REPOSITORY" "$TIER" "$OUTCOME" "$(git rev-parse HEAD)" \
+          "$DIGEST" "$RELEASE_ID" "$REASON: $MESSAGE" "$run_url" | tee -a "$GITHUB_OUTPUT"
+        revision=$(jq -r '.metadata.revision // ""' "$RUNNER_TEMP/event.json")
+        {
+          echo "## Evidence from \`$TIER\`"
+          echo
+          echo "| | |"
+          echo "|---|---|"
+          echo "| Result | **$OUTCOME** ($REASON) |"
+          echo "| Chart | \`$revision\` |"
+          echo "| Digest | \`$DIGEST\` |"
+          echo "| Release id | \`$RELEASE_ID\` |"
+          echo "| Deployment | $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/deployments/$TIER |"
+          echo "| Run | $run_url |"
+          echo
+          echo '```'
+          echo "$MESSAGE"
+          echo '```'
+        } > "$RUNNER_TEMP/evidence.md"
+        git config user.name "$APP_SLUG[bot]"
+        git config user.email "$APP_SLUG[bot]@users.noreply.github.com"
+
+    - id: open-pr
+      if: steps.verify.outputs.status == 'ok' && steps.parse.outputs.outcome == 'success' && steps.tier.outputs.next != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        TIER: ${{ steps.parse.outputs.tier }}
+        NEXT: ${{ steps.tier.outputs.next }}
+      run: |
+        "$GITHUB_ACTION_PATH/open-pr.sh" . "$TIER" "$NEXT" "$RUNNER_TEMP/evidence.md" | tee -a "$GITHUB_OUTPUT"
+
+    - id: revert
+      if: steps.verify.outputs.status == 'ok' && steps.parse.outputs.outcome == 'failure' && steps.tier.outputs.on_failure == 'rollback'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        TIER: ${{ steps.parse.outputs.tier }}
+      run: |
+        "$GITHUB_ACTION_PATH/revert-pr.sh" . "$TIER" "$RUNNER_TEMP/evidence.md" | tee -a "$GITHUB_OUTPUT"
+
+    - id: summary
+      if: always()
+      shell: bash
+      env:
+        STATUS: ${{ steps.verify.outputs.status }}
+        DEPLOYMENT: ${{ steps.deploy.outputs.deployment_url }}
+        PROMOTION: ${{ steps.open-pr.outputs.pr }}
+        REVERT: ${{ steps.revert.outputs.pr }}
+      run: |
+        {
+          echo "### Result"
+          echo "- Event: ${STATUS:-rejected}"
+          echo "- Deployment: ${DEPLOYMENT:-none}"
+          echo "- Promotion PR: ${PROMOTION:-none}"
+          echo "- Revert PR: ${REVERT:-none}"
+        } >> "$GITHUB_STEP_SUMMARY"

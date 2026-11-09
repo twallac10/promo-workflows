@@ -1,0 +1,45 @@
+# Reusable: called by each app repo on repository_dispatch from Flux
+# (event type HelmRelease/<app>.<app>). Validates the event, checks it against
+# main, records a Deployment and opens the promotion or revert PR, using the
+# promo GitHub App so PR workflows run. Callers: `secrets: inherit`.
+name: promote
+on:
+  workflow_call:
+    secrets:
+      PROMO_APP_ID:
+        required: true
+      PROMO_APP_PRIVATE_KEY:
+        required: true
+    inputs:
+      fleet-repo:
+        description: Repo holding tiers.yaml
+        type: string
+        default: twallac10/promo-fleet
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    # One run at a time per app and source tier (so per target tier); queue, never cancel.
+    concurrency:
+      group: promote-${{ github.repository }}-${{ github.event.client_payload.metadata.tier }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ secrets.PROMO_APP_ID }}
+          private-key: ${{ secrets.PROMO_APP_PRIVATE_KEY }}
+      # Always main: never code from a PR or from the event.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app.outputs.token }}
+      - uses: twallac10/promo-workflows/actions/promote@v0.4.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          app-slug: ${{ steps.app.outputs.app-slug }}
+          fleet-repo: ${{ inputs.fleet-repo }}
