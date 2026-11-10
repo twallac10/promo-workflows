@@ -64,8 +64,21 @@ runs:
       run: |
         "$GITHUB_ACTION_PATH/check-release.sh" "$BASE" "$HEAD" "$KIND" "$TIER" "$SOURCE" | tee -a "$GITHUB_OUTPUT"
 
+    # Promotions: a signed test-result attestation (PASSED) for the source tier and release.
+    - id: check-attestation
+      if: steps.classify.outputs.kind == 'promotion'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        SOURCE: ${{ steps.classify.outputs.source }}
+        DIGEST: ${{ steps.check-release.outputs.digest }}
+        RELEASE_ID: ${{ steps.check-release.outputs.release_id }}
+      run: |
+        "$GITHUB_ACTION_PATH/check-attestation.sh" "$GITHUB_REPOSITORY" "${GITHUB_REPOSITORY#*/promo-}" "$DIGEST" "$SOURCE" "$RELEASE_ID"
+
+    # Reverts: the tier's latest Deployment is a failure (smoke or behaviour).
     - id: check-evidence
-      if: steps.classify.outputs.kind != 'other'
+      if: steps.classify.outputs.kind == 'revert'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}

@@ -49,6 +49,7 @@ test_promotion_release_must_match_source() {
   git -C "$d" reset -q --hard main; cp "$d/tiers/dev/release.yaml" "$d/tiers/stg/release.yaml"; commit_all "$d" promote
   out=$(in_repo "$d" "$G/check-release.sh" "$base" HEAD promotion stg dev) || fail "matching promotion rejected"
   [ "$(val "$out" release_id)" = "$(rid_of "$d" "$d/tiers/dev/release.yaml")" ] || fail "release_id: $out"
+  [ "$(val "$out" digest)" = "$(yq 'select(.kind=="OCIRepository") | .spec.ref.digest' "$d/tiers/dev/release.yaml")" ] || fail "digest: $out"
 }
 
 test_revert_release_must_be_previous() {
@@ -111,9 +112,9 @@ test_guardrails_action_wiring() {
   a="$G/action.yml"; [ -f "$a" ] || fail "missing $a"
   bad=$(yq '.. | select(has("run")) | .run' "$a" | grep -n '\${{' || true)
   [ -z "$bad" ] || fail "run block interpolates an expression: $bad"
-  for id in check-release check-evidence; do
-    yq ".runs.steps[] | select(.id == \"$id\") | .if" "$a" | grep -q "steps.classify.outputs.kind != 'other'" || fail "$id must run for promotion/revert only"
-  done
+  yq '.runs.steps[] | select(.id == "check-release") | .if' "$a" | grep -q "steps.classify.outputs.kind != 'other'" || fail "check-release for promotion/revert only"
+  yq '.runs.steps[] | select(.id == "check-attestation") | .if' "$a" | grep -q "steps.classify.outputs.kind == 'promotion'" || fail "promotions need a verified attestation"
+  yq '.runs.steps[] | select(.id == "check-evidence") | .if' "$a" | grep -q "steps.classify.outputs.kind == 'revert'" || fail "check-evidence (Deployment) only for reverts now"
   [ "$(yq '.outputs.environment.value' "$a")" = '${{ steps.classify.outputs.tier }}' ] || fail "environment output"
   [ "$(yq '.inputs.fleet-repo.default' "$a")" = twallac10/promo-fleet ] || fail "fleet-repo default"
 }
@@ -167,4 +168,52 @@ test_renames_count_both_paths() {
   d=$(app_repo); base=$(git -C "$d" rev-parse main); pr_branch "$d" feature/move
   git -C "$d" mv tiers/prd/release.yaml tiers/dev/old.yaml; commit_all "$d" "move prd release"
   if in_repo "$d" "$G/check-files.sh" "$base" HEAD other prd dev >/dev/null 2>&1; then fail "moving prd's release.yaml away accepted"; fi
+}
+
+# Canned `gh attestation verify --format json` output: att <tier> <release hex> <result> <timestamp> ...
+attestations() {
+  local f; f=$(mktemp); local items=()
+  while [ $# -gt 0 ]; do
+    items+=("$(jq -n --arg t "$1" --arg h "$2" --arg r "$3" --arg ts "$4" '{verificationResult: {
+      statement: {predicateType: "https://in-toto.io/attestation/test-result/v0.1",
+        predicate: {result: $r, configuration: [{name: ("tiers/" + $t + "/release.yaml"), digest: {sha256: $h}, annotations: {tier: $t}}]}},
+      verifiedTimestamps: [{type: "Tlog", timestamp: $ts}]}}')"); shift 4
+  done
+  printf '%s\n' "${items[@]}" | jq -s . > "$f"; echo "$f"
+}
+H1=1111111111111111111111111111111111111111111111111111111111111111
+H2=2222222222222222222222222222222222222222222222222222222222222222
+D=sha256:3333333333333333333333333333333333333333333333333333333333333333
+check_att() { "$G/check-attestation.sh" twallac10/promo-kyverno kyverno "$D" dev "sha256:$H1"; }
+
+test_attestation_requires_passed_for_tier_and_release() {
+  use_gh_stub
+  GH_ATTESTATIONS=$(attestations dev $H1 PASSED 2026-11-10T10:00:00Z) check_att >/dev/null || fail "matching PASSED rejected"
+  if GH_ATTESTATIONS=$(attestations dev $H1 FAILED 2026-11-10T10:00:00Z) check_att >/dev/null 2>&1; then fail "FAILED accepted"; fi
+  if GH_ATTESTATIONS=$(attestations stg $H1 PASSED 2026-11-10T10:00:00Z) check_att >/dev/null 2>&1; then fail "another tier's PASSED accepted"; fi
+  if GH_ATTESTATIONS=$(attestations dev $H2 PASSED 2026-11-10T10:00:00Z) check_att >/dev/null 2>&1; then fail "another release's PASSED accepted"; fi
+}
+
+test_attestation_picks_latest_for_tier_and_release() {
+  use_gh_stub
+  if GH_ATTESTATIONS=$(attestations dev $H1 PASSED 2026-11-10T10:00:00Z dev $H1 FAILED 2026-11-10T11:00:00Z) check_att >/dev/null 2>&1; then
+    fail "older PASSED must not win over a newer FAILED"; fi
+  GH_ATTESTATIONS=$(attestations dev $H1 FAILED 2026-11-10T10:00:00Z dev $H1 PASSED 2026-11-10T11:00:00Z stg $H1 FAILED 2026-11-10T12:00:00Z) check_att >/dev/null \
+    || fail "newer PASSED (a retest) must win; other tiers don't count"
+}
+
+test_attestation_verify_enforces_signer() {
+  use_gh_stub; GH_ATTESTATIONS=$(attestations dev $H1 PASSED 2026-11-10T10:00:00Z) check_att >/dev/null
+  a=$(grep '^attestation verify' "$GH_LOG")
+  for want in "oci://ghcr.io/twallac10/charts/promo-kyverno@$D" "-R twallac10/promo-kyverno" \
+      "--predicate-type https://in-toto.io/attestation/test-result/v0.1" "--source-ref refs/heads/main" "--format json" \
+      '--cert-identity-regex ^https://github\.com/twallac10/promo-workflows/\.github/workflows/promote\.yaml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'; do
+    echo "$a" | grep -qF -- "$want" || fail "verify args lack '$want': $a"
+  done
+}
+
+test_attestation_none() {
+  use_gh_stub
+  if err=$(GH_ATTEST_EXIT=1 check_att 2>&1); then fail "no verifiable attestation accepted"; fi
+  echo "$err" | grep -q 'guardrail:' || fail "no reason given: $err"
 }

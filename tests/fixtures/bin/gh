@@ -21,5 +21,6 @@ case "$*" in
   "pr list"*) [ -n "${GH_OPEN_PR:-}" ] && echo "$GH_OPEN_PR"; true;;
   "pr create"*) echo "https://github.com/twallac10/promo-kyverno-policies/pull/7";;
   "pr merge"*) [ "${GH_MERGE_FAIL:-}" = 1 ] && { echo "auto-merge is not allowed for this repository" >&2; exit 1; }; true;;
+  "attestation verify"*) [ -n "${GH_ATTESTATIONS:-}" ] && cat "$GH_ATTESTATIONS"; exit "${GH_ATTEST_EXIT:-0}";;
 esac
 exit 0

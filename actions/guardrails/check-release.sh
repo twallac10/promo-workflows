@@ -22,3 +22,4 @@ esac
 cmp -s "$tmp/pr.yaml" "$tmp/want.yaml" || fail "$f in the PR differs from $what"
 git show "$base:scripts/release-id.sh" > "$tmp/release-id.sh"; chmod +x "$tmp/release-id.sh"
 echo "release_id=$("$tmp/release-id.sh" "$tmp/pr.yaml")"
+echo "digest=$(yq 'select(.kind=="OCIRepository") | .spec.ref.digest' "$tmp/pr.yaml")"
