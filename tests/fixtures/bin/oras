@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Test stub for oras: records the last command line next to itself.
+echo "$*" > "$(dirname "$0")/oras.last"
+case "$1" in attach) echo "Attached to [registry] ghcr.io/x@sha256:2222"; echo "Digest: sha256:3333333333333333333333333333333333333333333333333333333333333333";; esac
+exit 0

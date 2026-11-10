@@ -1,6 +1,7 @@
-# Handle one Flux event (repository_dispatch) in an app repo checked out at
-# main: validate it, check it against Git, record a Deployment, then open the
-# promotion PR (success) or, in a rollback tier, the revert PR (failure).
+# Handle one dispatch event in an app repo checked out at main: a Testkube test
+# report (behaviour tests: signed evidence) or a Flux smoke-test failure. Validate
+# it, check it against Git, store and sign the evidence, record a Deployment, then
+# open the promotion PR (success) or close it and, in a rollback tier, open a revert.
 # Values reach scripts through env only; the payload is read from the event file.
 name: promote
 description: Turn a Flux Helm test result into a Deployment and a promotion or revert PR
@@ -14,15 +15,23 @@ inputs:
   fleet-repo:
     description: Repo holding tiers.yaml
     required: true
+  registry-token:
+    description: Token with packages:write on the chart (github.token), for the junit artifact and attestation push
+    required: true
 runs:
   using: composite
   steps:
+    # Two event types: TestReport/<app>.<app> (behaviour tests from Testkube, the
+    # promotion evidence) and HelmRelease/<app>.<app> (Flux: smoke-test failures).
     - id: parse
       shell: bash
       run: |
-        jq '.client_payload' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/event.json"
-        { echo '### Flux event'; echo '```json'; cat "$RUNNER_TEMP/event.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-        "$GITHUB_ACTION_PATH/parse-event.sh" "$GITHUB_EVENT_PATH" "${GITHUB_REPOSITORY#*/}" | tee -a "$GITHUB_OUTPUT"
+        jq '.client_payload | del(.junit_b64)' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/event.json"
+        { echo '### Event'; echo '```json'; cat "$RUNNER_TEMP/event.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        case $(jq -r .action "$GITHUB_EVENT_PATH") in
+          TestReport/*) "$GITHUB_ACTION_PATH/parse-report.sh" "$GITHUB_EVENT_PATH" "${GITHUB_REPOSITORY#*/}" | tee -a "$GITHUB_OUTPUT";;
+          *) "$GITHUB_ACTION_PATH/parse-event.sh" "$GITHUB_EVENT_PATH" "${GITHUB_REPOSITORY#*/}" | tee -a "$GITHUB_OUTPUT";;
+        esac
 
     - id: tier
       shell: bash
@@ -42,6 +51,59 @@ runs:
       run: |
         "$GITHUB_ACTION_PATH/verify.sh" . "$TIER" "$DIGEST" "$RELEASE_ID" | tee -a "$GITHUB_OUTPUT"
 
+    # Evidence for a verified test report: junit.xml as an OCI artifact on the chart
+    # digest, and a signed in-toto test-result attestation (this workflow's identity).
+    - id: registry
+      if: steps.verify.outputs.status == 'ok' && steps.parse.outputs.kind == 'report'
+      shell: bash
+      env:
+        REGISTRY_TOKEN: ${{ inputs.registry-token }}
+        ACTOR: ${{ github.actor }}
+      run: |
+        # Pinned: oras 1.3.6, checksum from the release's checksums.txt.
+        v=1.3.6 sum=66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0
+        curl -fsSL "https://github.com/oras-project/oras/releases/download/v$v/oras_${v}_linux_amd64.tar.gz" -o "$RUNNER_TEMP/oras.tgz"
+        echo "$sum  $RUNNER_TEMP/oras.tgz" | sha256sum -c -
+        tar -xzf "$RUNNER_TEMP/oras.tgz" -C "$RUNNER_TEMP" oras
+        echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+        echo "$REGISTRY_TOKEN" | "$RUNNER_TEMP/oras" login ghcr.io -u "$ACTOR" --password-stdin
+        echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+    - id: attach-junit
+      if: steps.verify.outputs.status == 'ok' && steps.parse.outputs.kind == 'report'
+      shell: bash
+      env:
+        APP: ${{ steps.parse.outputs.app }}
+        DIGEST: ${{ steps.parse.outputs.digest }}
+        TIER: ${{ steps.parse.outputs.tier }}
+        RELEASE_ID: ${{ steps.parse.outputs.release_id }}
+      run: |
+        "$GITHUB_ACTION_PATH/attach-junit.sh" "$APP" "$DIGEST" "$TIER" "$RELEASE_ID" "$RUNNER_TEMP/junit.xml" | tee -a "$GITHUB_OUTPUT"
+
+    - id: predicate
+      if: steps.verify.outputs.status == 'ok' && steps.parse.outputs.kind == 'report'
+      shell: bash
+      env:
+        APP: ${{ steps.parse.outputs.app }}
+        TIER: ${{ steps.parse.outputs.tier }}
+        RELEASE_ID: ${{ steps.parse.outputs.release_id }}
+        REVISION: ${{ steps.parse.outputs.revision }}
+        EXECUTION: ${{ steps.parse.outputs.execution }}
+      run: |
+        "$GITHUB_ACTION_PATH/predicate.sh" "$TIER" "$APP" "$RELEASE_ID" "$REVISION" "$EXECUTION" "$RUNNER_TEMP/junit.xml" \
+          "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/predicate.json"
+        cat "$RUNNER_TEMP/predicate.json"
+
+    - id: attest
+      if: steps.verify.outputs.status == 'ok' && steps.parse.outputs.kind == 'report'
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+      with:
+        subject-name: ghcr.io/twallac10/charts/promo-${{ steps.parse.outputs.app }}
+        subject-digest: ${{ steps.parse.outputs.digest }}
+        predicate-type: https://in-toto.io/attestation/test-result/v0.1
+        predicate-path: ${{ runner.temp }}/predicate.json
+        push-to-registry: true
+
     - id: deploy
       if: steps.verify.outputs.status == 'ok'
       shell: bash
@@ -54,11 +116,15 @@ runs:
         REASON: ${{ steps.parse.outputs.reason }}
         MESSAGE: ${{ steps.parse.outputs.message }}
         APP_SLUG: ${{ inputs.app-slug }}
+        PASSED: ${{ steps.parse.outputs.passed }}
+        FAILED: ${{ steps.parse.outputs.failed }}
+        JUNIT_REF: ${{ steps.attach-junit.outputs.junit_ref }}
+        ATTESTATION: ${{ steps.attest.outputs.attestation-url }}
       run: |
         run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
         "$GITHUB_ACTION_PATH/deploy.sh" "$GITHUB_REPOSITORY" "$TIER" "$OUTCOME" "$(git rev-parse HEAD)" \
           "$DIGEST" "$RELEASE_ID" "$REASON: $MESSAGE" "$run_url" | tee -a "$GITHUB_OUTPUT"
-        revision=$(jq -r '.metadata.revision // ""' "$RUNNER_TEMP/event.json")
+        revision=$(jq -r '.metadata.revision // .revision // ""' "$RUNNER_TEMP/event.json")
         {
           echo "## Evidence from \`$TIER\`"
           echo
@@ -70,6 +136,15 @@ runs:
           echo "| Release id | \`$RELEASE_ID\` |"
           echo "| Deployment | $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/deployments/$TIER |"
           echo "| Run | $run_url |"
+          if [ -n "$JUNIT_REF" ]; then
+            echo "| JUnit (OCI) | \`$JUNIT_REF\` |"
+            echo "| Attestation | $ATTESTATION |"
+            echo
+            echo "| Behaviour check | Result |"
+            echo "|---|---|"
+            for c in ${PASSED//,/ }; do echo "| \`$c\` | passed |"; done
+            for c in ${FAILED//,/ }; do echo "| \`$c\` | **FAILED** |"; done
+          fi
           echo
           echo '```'
           echo "$MESSAGE"

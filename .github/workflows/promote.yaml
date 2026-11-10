@@ -18,6 +18,9 @@ on:
 
 permissions:
   contents: read
+  id-token: write      # keyless signing of the test-result attestation
+  attestations: write
+  packages: write      # junit artifact and attestation pushed to the chart in GHCR
 
 jobs:
   promote:
@@ -43,3 +46,4 @@ jobs:
           token: ${{ steps.app.outputs.token }}
           app-slug: ${{ steps.app.outputs.app-slug }}
           fleet-repo: ${{ inputs.fleet-repo }}
+          registry-token: ${{ github.token }}

@@ -31,7 +31,6 @@ is "$digest" "$sha" || die "digest '$digest'"
 is "$release_id" "$sha" || die "release id '$release_id'"
 is "$reason" '^[A-Za-z]{1,40}$' || die "reason '$reason'"
 case $severity/$reason in
-  info/TestSucceeded) outcome=success;;
   error/TestFailed|error/UpgradeFailed|error/InstallFailed) outcome=failure;;
   *) die "severity '$severity' with reason '$reason' is neither a success nor a failure";;
 esac
@@ -46,6 +45,7 @@ case $reason in
   *) if [ "${revision:-1}" -gt 1 ]; then upgrade=true; else upgrade=false; fi;;
 esac
 
+echo "kind=event"
 echo "outcome=$outcome"
 echo "app=$app"
 echo "tier=$tier"

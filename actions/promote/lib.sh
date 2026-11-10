@@ -50,3 +50,10 @@ close_open_pr() {
   [ -z "$open" ] || gh pr close "$branch" --comment "$comment" --delete-branch >/dev/null
   echo "$open"
 }
+
+# Testcases of a one-suite JUnit file as a JSON array of {name, failed}. A
+# testcase with a <failure> or <error> child failed; suite counts are ignored.
+junit_cases() {
+  yq -p xml -o json -I0 '[.testsuites.testsuite.testcase] | flatten | map(select(. != null))' "$1" |
+    jq -c 'map({name: .["+@name"], failed: (has("failure") or has("error"))})'
+}
